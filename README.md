@@ -14,7 +14,13 @@ App #7 del reto [101 great ideas](https://github.com/briandh5/101greatideas).
 - Sección para conocer y apoyar al [INECOL](https://www.inecol.mx).
 - Tema día / noche.
 
-Los datos son **simulados** con una semilla fija a partir de la climatología típica de Xalapa (14–18 °C, 1,350–1,650 mm al año); no son mediciones oficiales.
+## Datos
+
+- **Reales (por defecto):** temperatura media y lluvia diarias 1990–2025 del reanálisis **ERA5** vía [Open-Meteo](https://open-meteo.com/) (celda 19.508, −96.971, 1405 m), y temperatura anual 1990–2024 de [NASA POWER](https://power.larc.nasa.gov/) (celda a 1133 m) para comparar tendencias. Archivos originales en `datos-reales/`; `src/datosReales.js` es la versión compacta que usa la app.
+- **Días con niebla:** siempre simulados, porque ninguna de las dos fuentes los reporta.
+- **Modo Simulados:** todo generado con una semilla fija a partir de la climatología típica de Xalapa, para practicar.
+
+Ninguna de las fuentes es una estación en Xalapa; son estimaciones en malla y sus tendencias no coinciden (ERA5 ≈ +0.07 °C/década, POWER ≈ +0.32 °C/década).
 
 ## Stack
 

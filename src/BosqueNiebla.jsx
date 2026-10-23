@@ -7,6 +7,7 @@ import {
   BookOpen, CloudFog, CloudRain, Code2, Droplets, ExternalLink, Info, Leaf,
   Moon, Sun, Thermometer, TreePine, X, Zap,
 } from 'lucide-react'
+import { ERA5_PRECIP, ERA5_TMEAN, POWER_T2M_ANUAL } from './datosReales.js'
 
 /* ───────────────────────── Datos simulados ───────────────────────── */
 
@@ -34,7 +35,7 @@ function mulberry32(semilla) {
   }
 }
 
-function generarDatos() {
+function generarDatos(fuente = 'real') {
   const rnd = mulberry32(42)
   const normal = () => {
     const u = 1 - rnd()
@@ -80,7 +81,37 @@ function generarDatos() {
       }
     }
   }
+  if (fuente === 'real') {
+    // Temperatura y lluvia reales de ERA5; la niebla sigue simulada (ERA5 no la reporta)
+    dias.forEach((d, i) => {
+      d.temp = ERA5_TMEAN[i]
+      d.precip = ERA5_PRECIP[i]
+    })
+  }
   return dias
+}
+
+// Anomalía anual de cada fuente real contra su propio promedio 1990–2019
+function compararFuentes() {
+  const porAnio = new Map()
+  ERA5_TMEAN.forEach((t, i) => {
+    const fecha = new Date(Date.UTC(ANIO_INICIO, 0, 1 + i))
+    const a = fecha.getUTCFullYear()
+    if (!porAnio.has(a)) porAnio.set(a, [])
+    porAnio.get(a).push(t)
+  })
+  const era5 = [...porAnio].map(([anio, ts]) => ({ anio, t: media(ts) }))
+  const power = Object.entries(POWER_T2M_ANUAL).map(([anio, t]) => ({ anio: Number(anio), t }))
+  const base = (xs) => media(xs.filter((x) => x.anio <= 2019).map((x) => x.t))
+  const bE = base(era5)
+  const bP = base(power)
+  const filas = era5.map((e) => {
+    const p = power.find((x) => x.anio === e.anio)
+    return { anio: e.anio, era5: e.t - bE, power: p ? p.t - bP : null, era5Abs: e.t, powerAbs: p?.t ?? null }
+  })
+  const [mE] = polyfit1(era5.map((x) => x.anio), era5.map((x) => x.t))
+  const [mP] = polyfit1(power.map((x) => x.anio), power.map((x) => x.t))
+  return { filas, tendEra5: mE * 10, tendPower: mP * 10 }
 }
 
 /* ───────────────────────── Utilidades estadísticas ───────────────────────── */
@@ -379,6 +410,59 @@ function FilaCalor({ f, pal, mover }) {
   )
 }
 
+/* ───────────────────────── Dos fuentes reales ───────────────────────── */
+
+function ComparaFuentes({ c, pal, ejes }) {
+  return (
+    <div className="mt-6 pt-5 border-t border-line">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1">
+        <h3 className="font-display text-[16px] text-ink">¿Se está calentando? Dos fuentes reales</h3>
+        <span className="text-[12px] text-ink2">Anomalía anual contra el promedio 1990–2019 de cada fuente</span>
+      </div>
+      <div className="flex flex-wrap gap-2 my-3">
+        {[
+          [pal.lluvia, 'ERA5 · Open-Meteo (1405 m)', c.tendEra5],
+          [pal.niebla, 'NASA POWER (1133 m)', c.tendPower],
+        ].map(([color, nombre, t]) => (
+          <div key={nombre} className="flex items-center gap-2 rounded-full border border-line px-3 py-1 text-[12px]">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
+            <span className="text-ink2">{nombre}</span>
+            <span className="font-mono text-ink tabular-nums">{signo(t)} °C/década</span>
+          </div>
+        ))}
+      </div>
+      <div className="h-[200px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={c.filas} margin={{ top: 4, right: 18, left: -4, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke={pal.grid} />
+            <XAxis dataKey="anio" {...ejes} ticks={[1990, 1995, 2000, 2005, 2010, 2015, 2020, 2025]} />
+            <YAxis {...ejes} width={56} domain={[-1, 2]} ticks={[-1, 0, 1, 2]} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v} °C`} />
+            <Tooltip
+              content={({ active, payload, label }) =>
+                active && payload?.length ? (
+                  <CajaTooltip
+                    titulo={label}
+                    filas={[
+                      [pal.lluvia, 'ERA5', `${signo(payload[0].payload.era5)} °C · ${fmt(payload[0].payload.era5Abs)} °C`],
+                      ...(payload[0].payload.power != null ? [[pal.niebla, 'NASA POWER', `${signo(payload[0].payload.power)} °C · ${fmt(payload[0].payload.powerAbs)} °C`]] : []),
+                    ]}
+                  />
+                ) : null
+              }
+            />
+            <Line dataKey="era5" name="ERA5" stroke={pal.lluvia} strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
+            <Line dataKey="power" name="NASA POWER" stroke={pal.niebla} strokeWidth={2} dot={false} activeDot={{ r: 5 }} connectNulls={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="text-[12px] text-muted mt-2 max-w-3xl">
+        Las dos son estimaciones en malla (no una estación en Xalapa) y no coinciden: POWER marca un calentamiento claro y ERA5 casi plano en esta celda. Para una conclusión firme habría que
+        contrastarlas con las estaciones del SMN/CONAGUA.
+      </p>
+    </div>
+  )
+}
+
 /* ───────────────────────── Violín (SVG propio) ───────────────────────── */
 
 function Violin({ grupos, umbral, pal }) {
@@ -528,10 +612,36 @@ function LeccionDatos({ st }) {
   return (
     <>
       <p className="text-[#b9c4b7]">
-        Todo empieza con un <strong className="text-[#eef3ea]">DataFrame diario</strong>: una fila por día de {ANIO_INICIO} a {ANIO_FIN} ({fmt(st.totalDias, 0)} filas). Los datos son
-        simulados con NumPy a partir de la climatología típica de Xalapa, con tendencia de calentamiento y menos niebla con los años.
+        Todo empieza con un <strong className="text-[#eef3ea]">DataFrame diario</strong>: una fila por día de {ANIO_INICIO} a {ANIO_FIN} ({fmt(st.totalDias, 0)} filas con tus filtros).{' '}
+        {st.fuente === 'real'
+          ? 'Temperatura y lluvia vienen del reanálisis ERA5 (descargado de Open-Meteo como CSV). La niebla no la mide ERA5, así que se simula con NumPy.'
+          : 'En este modo todo está simulado con NumPy a partir de la climatología típica de Xalapa, con tendencia de calentamiento y menos niebla con los años.'}
       </p>
-      <Editor
+      {st.fuente === 'real' && (
+        <Editor
+          titulo="01_datos_reales.py"
+          codigo={`
+import numpy as np
+import pandas as pd
+
+# CSV descargado de la API de Open-Meteo (ERA5), celda 19.51, -96.97
+df = pd.read_csv("era5_xalapa_diario.csv",
+                 parse_dates=["fecha"], index_col="fecha")
+df = df.rename(columns={"tmean": "temp"})[["temp", "precip"]]
+
+df["anio"] = df.index.year
+df["mes"] = df.index.month
+df["decada"] = (df["anio"] // 10 * 10).astype(str) + "s"
+
+# ERA5 no trae niebla: la simulamos (1 = día con niebla)
+rng = np.random.default_rng(seed=42)
+df["niebla"] = (rng.random(len(df)) < prob_niebla[df["mes"] - 1]).astype(int)
+
+df.info()        # 13,149 filas, sin nulos
+df.head()`}
+        />
+      )}
+      {st.fuente === 'sim' && <Editor
         titulo="01_datos.py"
         codigo={`
 import numpy as np
@@ -558,7 +668,7 @@ df["precip"] = np.where(llueve, rng.exponential(6, len(df)), 0.0)
 # Niebla: variable booleana (1 = hubo niebla ese día)
 df["niebla"] = (rng.random(len(df)) < prob_niebla[df["mes"] - 1]).astype(int)
 df.head()`}
-      />
+      />}
       <Salida>
         {`            anio  mes decada  temp  precip  niebla\n`}
         {cab.map((d) => `${d.fecha}  ${d.anio}  ${String(d.mes + 1).padStart(3)}  ${d.decada}  ${d.temp.toFixed(1).padStart(4)}  ${d.precip.toFixed(1).padStart(6)}  ${String(d.niebla).padStart(6)}`).join('\n')}
@@ -611,6 +721,7 @@ print(f"Tendencia: {pendiente * 10:+.2f} °C por década")`}
         {`\n\nanual.tail(3):\n`}
         {st.anualAnom.slice(-3).map((a) => `  ${a.anio}   ${signo(a.anual, 3)}`).join('\n')}
         {`\n\nTendencia: ${signo(st.pendiente * 10, 2)} °C por década`}
+        {st.fuente === 'real' ? `\n\n# misma cuenta, 1990–2025, sin filtros\nERA5        ${signo(st.comparacion.tendEra5, 2)} °C/década\nNASA POWER  ${signo(st.comparacion.tendPower, 2)} °C/década  (1990–2024)` : ''}
       </Salida>
       <Paso n="1" titulo="groupby vs pivot_table">
         <C>groupby</C> produce una tabla “larga” (una fila por año-mes). <C>pivot_table</C> la vuelve “ancha”: exactamente la forma de la cuadrícula del mapa de calor.
@@ -620,6 +731,10 @@ print(f"Tendencia: {pendiente * 10:+.2f} °C por década")`}
       </Paso>
       <Paso n="3" titulo="np.polyfit">
         Ajusta una recta por mínimos cuadrados. La pendiente (°C/año × 10) resume en un número cuánto se calienta el bosque por década.
+      </Paso>
+      <Paso n="4" titulo="Compara fuentes antes de concluir">
+        ERA5 y NASA POWER son reanálisis en malla: cada celda promedia decenas de kilómetros y una altitud distinta (1405 m vs. 1133 m). Por eso su temperatura absoluta y su tendencia
+        difieren. Comparar anomalías (cada una contra su propia normal) en lugar de valores absolutos es la forma justa de ponerlas lado a lado.
       </Paso>
     </>
   )
@@ -725,7 +840,9 @@ extremos.groupby("decada").size() / anios`}
 /* ───────────────────────── App ───────────────────────── */
 
 export default function BosqueNiebla() {
-  const datos = useMemo(generarDatos, [])
+  const [fuente, setFuente] = useState('real')
+  const datos = useMemo(() => generarDatos(fuente), [fuente])
+  const comparacion = useMemo(compararFuentes, [])
   const [oscuro, setOscuro] = useState(() => {
     try {
       const g = localStorage.getItem('bn-tema')
@@ -837,6 +954,8 @@ export default function BosqueNiebla() {
 
     return {
       decadas,
+      fuente,
+      comparacion,
       totalDias: dias.length,
       head: dias.slice(0, 5),
       normal: mensualTodo.normal,
@@ -858,7 +977,7 @@ export default function BosqueNiebla() {
       umbral,
       anios2020: aniosDe('2020s'),
     }
-  }, [datos, mensualTodo, decadas, umbral])
+  }, [datos, mensualTodo, decadas, umbral, fuente, comparacion])
 
   const ejes = { stroke: pal.eje, fontSize: 11, tickLine: false, axisLine: { stroke: pal.grid } }
 
@@ -886,7 +1005,7 @@ export default function BosqueNiebla() {
             Microclima del bosque de niebla
           </h1>
           <p className="text-ink2 mt-3 max-w-2xl text-[15px]">
-            Treinta y cinco años de temperatura, lluvia y niebla en un dashboard que además te enseña, paso a paso, el análisis con Pandas y NumPy que hay detrás de cada gráfica.
+            Treinta y seis años de temperatura y lluvia reales (reanálisis ERA5) en un dashboard que además te enseña, paso a paso, el análisis con Pandas y NumPy que hay detrás de cada gráfica.
           </p>
           <div className="flex flex-wrap gap-2 mt-5">
             <button
@@ -934,14 +1053,15 @@ export default function BosqueNiebla() {
             Todas
           </button>
           <span className="flex-1" />
-          <span className="text-[11px] text-muted">Datos simulados con fines educativos</span>
+          <span className="text-[12px] text-ink2 mr-1">Fuente:</span>
+          <Segmentado opciones={[['real', 'Reales · ERA5'], ['sim', 'Simulados']]} valor={fuente} onCambio={setFuente} />
         </div>
 
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Kpi icono={Thermometer} etiqueta="Temperatura media" valor={fmt(st.tempMedia)} unidad="°C" nota={`Anomalía ${signo(st.anomMedia)} °C vs. 1990–2019`} />
           <Kpi icono={Droplets} etiqueta="Lluvia anual" valor={fmt(st.lluviaAnual, 0)} unidad="mm" nota="Promedio de las décadas elegidas" />
-          <Kpi icono={CloudFog} etiqueta="Días con niebla" valor={fmt(st.nieblaAnual, 0)} unidad="al año" nota={`Correlación con lluvia r = ${fmt(st.r, 2)}`} />
+          <Kpi icono={CloudFog} etiqueta="Días con niebla" valor={fmt(st.nieblaAnual, 0)} unidad="al año" nota={`Simulados · correlación con lluvia r = ${fmt(st.r, 2)}`} />
           <Kpi icono={Zap} etiqueta="Lluvias extremas" valor={fmt(st.extremosAnio, 1)} unidad="por año" nota={`Días con más de ${umbral} mm`} />
         </div>
 
@@ -953,13 +1073,14 @@ export default function BosqueNiebla() {
           onInfo={() => abrirInfo('calor')}
         >
           <MapaCalor filas={st.calor} pal={pal} />
+          <ComparaFuentes c={comparacion} pal={pal} ejes={ejes} />
         </Tarjeta>
 
         <div className="grid lg:grid-cols-2 gap-5">
           {/* Doble eje */}
           <Tarjeta
             titulo="Lluvia y niebla"
-            subtitulo="Ciclo anual promedio: precipitación mensual (barras) y días con niebla (línea)."
+            subtitulo={`Ciclo anual promedio: precipitación mensual${fuente === 'real' ? ' real' : ''} (barras) y días con niebla simulados (línea).`}
             icono={CloudRain}
             onInfo={() => abrirInfo('doble')}
             acciones={<Segmentado opciones={[['doble', 'Doble eje'], ['sep', 'Separadas']]} valor={vistaDoble} onCambio={setVistaDoble} />}
@@ -1149,7 +1270,7 @@ export default function BosqueNiebla() {
         </section>
 
         <footer className="text-[12px] text-muted pb-8 pt-2 flex flex-wrap gap-x-4 gap-y-1">
-          <span>Datos simulados con NumPy para aprender; no son mediciones oficiales.</span>
+          <span>Temperatura y lluvia: reanálisis ERA5 vía Open-Meteo (celda 19.51, −96.97, 1405 m) y NASA POWER. Días con niebla: simulados con NumPy. Modo «Simulados»: todo generado para aprender.</span>
           <span>Hecho con React, Tailwind y Recharts · By Brian Hawkins</span>
         </footer>
       </main>
