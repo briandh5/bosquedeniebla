@@ -222,37 +222,6 @@ function resaltar(linea) {
   return partes
 }
 
-function Editor({ codigo, titulo = 'notebook.py' }) {
-  const lineas = codigo.trim().split('\n')
-  return (
-    <div className="rounded-xl overflow-hidden border border-[#2a352d] bg-code shadow-inner">
-      <div className="flex items-center gap-2 px-3 py-2 bg-[#1c2620] border-b border-[#2a352d]">
-        <span className="w-2.5 h-2.5 rounded-full bg-[#e0605a]" />
-        <span className="w-2.5 h-2.5 rounded-full bg-[#e6b673]" />
-        <span className="w-2.5 h-2.5 rounded-full bg-[#7fbf6a]" />
-        <span className="ml-2 font-mono text-[11px] text-[#8a968a]">{titulo}</span>
-      </div>
-      <pre className="scroll-fino overflow-x-auto p-3 text-[12px] leading-[1.6] font-mono">
-        {lineas.map((l, i) => (
-          <div key={i} className="flex">
-            <span className="select-none w-7 shrink-0 text-right pr-3 text-[#4b5a4e]">{i + 1}</span>
-            <span className="whitespace-pre">{resaltar(l)}</span>
-          </div>
-        ))}
-      </pre>
-    </div>
-  )
-}
-
-function Salida({ children, etiqueta = 'Out' }) {
-  return (
-    <div className="rounded-xl border border-[#2a352d] bg-[#0f1511] font-mono text-[12px] text-[#cfd8cc]">
-      <div className="px-3 pt-2 text-[11px] text-[#7fbf6a]">{etiqueta} ▸ con tus filtros actuales</div>
-      <div className="scroll-fino overflow-x-auto p-3 pt-1.5 whitespace-pre leading-[1.55]">{children}</div>
-    </div>
-  )
-}
-
 /* ───────────────────────── Componentes de UI ───────────────────────── */
 
 function Tarjeta({ titulo, subtitulo, icono: Icono, onInfo, acciones, children }) {
@@ -568,7 +537,7 @@ function PanelAprendizaje({ abierto, tab, setTab, onCerrar, st }) {
             </button>
           </div>
           <p className="text-[12.5px] text-[#9eab9d] mt-1">
-            Cada gráfica sale de unas cuantas líneas de Pandas y NumPy. Los resultados de abajo se recalculan con los filtros que tengas activos.
+            Ejecuta las celdas una por una: cada sentencia trae su resultado real y lo que hace. Al final llegas a una consulta útil para la investigación.
           </p>
           <div className="flex flex-wrap gap-1.5 mt-3">
             {tabs.map(([k, l]) => (
@@ -583,259 +552,421 @@ function PanelAprendizaje({ abierto, tab, setTab, onCerrar, st }) {
           </div>
         </div>
         <div className="scroll-fino flex-1 overflow-y-auto px-5 py-4 space-y-4 text-[13.5px] leading-relaxed">
-          {tab === 'datos' && <LeccionDatos st={st} />}
-          {tab === 'calor' && <LeccionCalor st={st} />}
-          {tab === 'doble' && <LeccionDoble st={st} />}
-          {tab === 'lluvia' && <LeccionLluvia st={st} />}
+          <Cuaderno key={`${tab}-${st.fuente}`} intro={INTROS[tab](st)} pasos={PASOS[tab](st)} />
         </div>
       </aside>
     </>
   )
 }
 
-function Paso({ n, titulo, children }) {
+/* ───────────────────────── Cuaderno interactivo ───────────────────────── */
+
+const C = ({ children }) => <code className="font-mono text-[12px] px-1.5 py-0.5 rounded bg-[#1f2a22] text-[#a7d47b]">{children}</code>
+
+// Imprime una tabla como lo haría pandas: índice a la izquierda, números alineados a la derecha
+function tabla(encabezados, filas) {
+  const todas = [encabezados, ...filas].map((f) => f.map((c) => String(c)))
+  const anchos = encabezados.map((_, j) => Math.max(...todas.map((f) => (f[j] ?? '').length)))
+  return todas.map((f) => f.map((c, j) => (j === 0 ? c.padEnd(anchos[j]) : c.padStart(anchos[j]))).join('  ')).join('\n')
+}
+const d1 = (v) => v.toFixed(1)
+const d2 = (v) => v.toFixed(2)
+const fechaDe = (f) => `${f.anio}-${String(f.mes + 1).padStart(2, '0')}-01`
+const NOMBRE_MES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+function CeldaCodigo({ codigo, apagada }) {
   return (
-    <div className="flex gap-3">
-      <div className="w-6 h-6 rounded-full bg-[#2a3a2c] text-[#a7d47b] text-[12px] font-mono grid place-items-center shrink-0 mt-0.5">{n}</div>
-      <div>
-        <div className="font-semibold text-[#eef3ea]">{titulo}</div>
-        <div className="text-[#b9c4b7]">{children}</div>
+    <pre className={`scroll-fino overflow-x-auto px-3 py-2.5 text-[12px] leading-[1.6] font-mono ${apagada ? 'opacity-80' : ''}`}>
+      {codigo.trim().split('\n').map((l, i) => (
+        <div key={i} className="whitespace-pre">{resaltar(l)}</div>
+      ))}
+    </pre>
+  )
+}
+
+function Cuaderno({ intro, pasos }) {
+  const [hechas, setHechas] = useState(0)
+  const [corriendo, setCorriendo] = useState(false)
+  const fin = useRef(null)
+  const total = pasos.length
+
+  useEffect(() => {
+    if (hechas > 0) fin.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [hechas])
+
+  const ejecutar = () => {
+    if (corriendo || hechas >= total) return
+    setCorriendo(true)
+    setTimeout(() => {
+      setHechas((h) => Math.min(h + 1, total))
+      setCorriendo(false)
+    }, 380)
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[#b9c4b7]">{intro}</p>
+      <div className="sticky -top-4 z-10 -mx-5 px-5 py-2 bg-[#121915]/95 backdrop-blur border-b border-[#2a352d] flex items-center gap-2">
+        <div className="flex gap-1 flex-1" aria-label={`${hechas} de ${total} celdas ejecutadas`}>
+          {pasos.map((p, i) => (
+            <span
+              key={i}
+              className={`h-1.5 flex-1 rounded-full transition-colors ${i < hechas ? (p.consulta ? 'bg-[#e6b673]' : 'bg-[#a7d47b]') : 'bg-[#2a352d]'}`}
+            />
+          ))}
+        </div>
+        <span className="font-mono text-[11px] text-[#8a968a] w-10 text-right">{hechas}/{total}</span>
+        <button
+          onClick={() => setHechas(total)}
+          disabled={hechas >= total}
+          className="text-[11.5px] px-2.5 py-1 rounded-md border border-[#2f3b32] text-[#b9c4b7] hover:border-[#a7d47b] disabled:opacity-40"
+        >
+          Todo
+        </button>
+        <button
+          onClick={() => setHechas(0)}
+          disabled={hechas === 0}
+          className="text-[11.5px] px-2.5 py-1 rounded-md border border-[#2f3b32] text-[#b9c4b7] hover:border-[#a7d47b] disabled:opacity-40"
+        >
+          Reiniciar
+        </button>
       </div>
+
+      {pasos.slice(0, Math.min(hechas + 1, total)).map((p, i) => {
+        const hecha = i < hechas
+        const activa = i === hechas
+        return (
+          <div
+            key={i}
+            className={`rounded-xl border overflow-hidden ${p.consulta ? 'border-[#6b5a35]' : activa ? 'border-[#4b6a3f]' : 'border-[#2a352d]'} bg-code`}
+          >
+            {p.consulta && (
+              <div className="px-3 py-1.5 bg-[#2a2416] text-[#e6b673] text-[11.5px] font-semibold border-b border-[#6b5a35]">
+                Consulta para la investigación: {p.pregunta}
+              </div>
+            )}
+            <div className="flex">
+              <div className="w-12 shrink-0 pt-2.5 text-right pr-1 font-mono text-[11px] text-[#5d6e60] select-none">
+                [{hecha ? i + 1 : activa && corriendo ? '*' : ' '}]
+              </div>
+              <div className="flex-1 min-w-0">
+                <CeldaCodigo codigo={p.codigo} apagada={!hecha && !activa} />
+              </div>
+            </div>
+            {activa && (
+              <div className="px-3 pb-3 flex flex-wrap items-center gap-3 border-t border-[#1f2a22] pt-2.5">
+                <p className="flex-1 min-w-[180px] text-[12.5px] text-[#9eab9d]">{p.antes}</p>
+                <button
+                  onClick={ejecutar}
+                  disabled={corriendo}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#a7d47b] text-[#121915] px-3 py-1.5 text-[12.5px] font-semibold hover:brightness-105 disabled:opacity-60"
+                >
+                  {corriendo ? 'Ejecutando…' : '▶ Ejecutar'}
+                </button>
+              </div>
+            )}
+            {hecha && (
+              <>
+                {p.salida != null && (
+                  <div className="flex border-t border-[#1f2a22] bg-[#0f1511]">
+                    <div className="w-12 shrink-0 pt-2 text-right pr-1 font-mono text-[11px] text-[#7fbf6a] select-none">Out</div>
+                    <pre className="scroll-fino flex-1 min-w-0 overflow-x-auto px-3 py-2 font-mono text-[12px] leading-[1.55] text-[#cfd8cc] whitespace-pre">{p.salida}</pre>
+                  </div>
+                )}
+                <div className="px-3 py-2.5 border-t border-[#1f2a22] text-[12.5px] text-[#c4cec1] bg-[#141d17]">
+                  {p.explica}
+                </div>
+                {p.conclusion && (
+                  <div className="px-3 py-2.5 border-t border-[#6b5a35] text-[12.5px] text-[#f1dfb8] bg-[#211d12]">
+                    <span className="font-semibold">Qué nos dice: </span>
+                    {p.conclusion}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )
+      })}
+
+      {hechas >= total && (
+        <div className="rounded-xl border border-[#2f3b32] px-3 py-2.5 text-[12.5px] text-[#9eab9d]">
+          Cuaderno completo. Cambia las décadas, la fuente o el umbral en el dashboard y vuelve a ejecutarlo: las salidas se recalculan con tus filtros.
+        </div>
+      )}
+      <div ref={fin} />
     </div>
   )
 }
 
-const C = ({ children }) => <code className="font-mono text-[12px] px-1.5 py-0.5 rounded bg-[#1f2a22] text-[#a7d47b]">{children}</code>
+/* ───────────────────────── Lecciones (celda por celda) ───────────────────────── */
 
-function LeccionDatos({ st }) {
-  const cab = st.head
-  return (
-    <>
-      <p className="text-[#b9c4b7]">
-        Todo empieza con un <strong className="text-[#eef3ea]">DataFrame diario</strong>: una fila por día de {ANIO_INICIO} a {ANIO_FIN} ({fmt(st.totalDias, 0)} filas con tus filtros).{' '}
-        {st.fuente === 'real'
-          ? 'Temperatura y lluvia vienen del reanálisis ERA5 (descargado de Open-Meteo como CSV). La niebla no la mide ERA5, así que se simula con NumPy.'
-          : 'En este modo todo está simulado con NumPy a partir de la climatología típica de Xalapa, con tendencia de calentamiento y menos niebla con los años.'}
-      </p>
-      {st.fuente === 'real' && (
-        <Editor
-          titulo="01_datos_reales.py"
-          codigo={`
-import numpy as np
-import pandas as pd
-
-# CSV descargado de la API de Open-Meteo (ERA5), celda 19.51, -96.97
-df = pd.read_csv("era5_xalapa_diario.csv",
-                 parse_dates=["fecha"], index_col="fecha")
-df = df.rename(columns={"tmean": "temp"})[["temp", "precip"]]
-
-df["anio"] = df.index.year
-df["mes"] = df.index.month
-df["decada"] = (df["anio"] // 10 * 10).astype(str) + "s"
-
-# ERA5 no trae niebla: la simulamos (1 = día con niebla)
-rng = np.random.default_rng(seed=42)
-df["niebla"] = (rng.random(len(df)) < prob_niebla[df["mes"] - 1]).astype(int)
-
-df.info()        # 13,149 filas, sin nulos
-df.head()`}
-        />
-      )}
-      {st.fuente === 'sim' && <Editor
-        titulo="01_datos.py"
-        codigo={`
-import numpy as np
-import pandas as pd
-
-rng = np.random.default_rng(seed=42)
-fechas = pd.date_range("1990-01-01", "2025-12-31", freq="D")
-df = pd.DataFrame(index=fechas)
-df["anio"] = df.index.year
-df["mes"] = df.index.month
-df["decada"] = (df["anio"] // 10 * 10).astype(str) + "s"
-
-# Temperatura = climatología del mes + tendencia + ruido gaussiano
-clima = np.array([14.0, 14.8, 16.4, 17.6, 18.0, 17.6,
-                  17.0, 17.1, 16.8, 15.9, 15.0, 14.2])
-t = df["anio"] - 1990
-tendencia = 0.018 * t + 0.0006 * t**2
-df["temp"] = clima[df["mes"] - 1] + tendencia + rng.normal(0, 1.3, len(df))
-
-# Lluvia: días húmedos con montos exponenciales (cola pesada)
-llueve = rng.random(len(df)) < prob_lluvia[df["mes"] - 1]
-df["precip"] = np.where(llueve, rng.exponential(6, len(df)), 0.0)
-
-# Niebla: variable booleana (1 = hubo niebla ese día)
-df["niebla"] = (rng.random(len(df)) < prob_niebla[df["mes"] - 1]).astype(int)
-df.head()`}
-      />}
-      <Salida>
-        {`            anio  mes decada  temp  precip  niebla\n`}
-        {cab.map((d) => `${d.fecha}  ${d.anio}  ${String(d.mes + 1).padStart(3)}  ${d.decada}  ${d.temp.toFixed(1).padStart(4)}  ${d.precip.toFixed(1).padStart(6)}  ${String(d.niebla).padStart(6)}`).join('\n')}
-      </Salida>
-      <Paso n="1" titulo="Índice de fechas">
-        Usar <C>pd.date_range</C> como índice convierte al DataFrame en una <em>serie de tiempo</em>: así funcionan <C>resample()</C>, <C>.dt</C> y los cortes por fecha.
-      </Paso>
-      <Paso n="2" titulo="Vectorizar con NumPy">
-        <C>clima[df["mes"] - 1]</C> no usa ningún <C>for</C>: NumPy indexa el arreglo con toda la columna a la vez. Es la diferencia entre segundos y milisegundos.
-      </Paso>
-      <Paso n="3" titulo="Filtrar por década">
-        Los botones de década equivalen a <C>{`df[df["decada"].isin(${JSON.stringify(st.decadas)})]`}</C>.
-      </Paso>
-    </>
-  )
+function pasosDatos(st) {
+  const real = st.fuente === 'real'
+  const porDecada = DECADAS.map((d) => [d, st.todos.filter((x) => x.decada === d).length])
+  const temps = st.dias.map((d) => d.temp)
+  const lluvias = st.dias.map((d) => d.precip)
+  const desc = (xs) => {
+    const m = media(xs)
+    const sd = Math.sqrt(media(xs.map((v) => (v - m) ** 2)))
+    return [xs.length, m, sd, Math.min(...xs), cuantil(xs, 0.5), Math.max(...xs)]
+  }
+  const dt = desc(temps)
+  const dp = desc(lluvias)
+  const resumen = st.decadas.map((d) => {
+    const xs = st.dias.filter((x) => x.decada === d)
+    return [d, d1(media(xs.map((x) => x.temp))), d1(Math.max(...xs.map((x) => x.temp))), d1(media(xs.map((x) => x.precip))), d1(Math.max(...xs.map((x) => x.precip)))]
+  })
+  const masCalida = [...resumen].sort((a, b) => Number(b[1]) - Number(a[1]))[0]
+  return [
+    {
+      codigo: 'import numpy as np\nimport pandas as pd',
+      antes: 'Primero cargamos las dos bibliotecas.',
+      salida: null,
+      explica: <>Pandas maneja tablas (<C>DataFrame</C>) y NumPy hace las cuentas numéricas rápidas. Los alias <C>pd</C> y <C>np</C> son la convención que usa todo el mundo.</>,
+    },
+    real
+      ? {
+          codigo: 'df = pd.read_csv("era5_xalapa_diario.csv",\n                 usecols=["fecha", "tmean", "precip"],\n                 parse_dates=["fecha"], index_col="fecha")\ndf = df.rename(columns={"tmean": "temp"})',
+          antes: 'Leemos el CSV que bajamos de Open-Meteo (reanálisis ERA5).',
+          salida: null,
+          explica: <><C>usecols</C> lee solo las columnas que nos interesan, <C>parse_dates</C> convierte el texto en fechas reales y <C>index_col</C> las usa como índice: así el DataFrame se vuelve una <em>serie de tiempo</em>. <C>rename</C> le pone un nombre más claro a la columna.</>,
+        }
+      : {
+          codigo: '# Modo "Simulados": generamos el clima con NumPy\ndf = simular_clima(desde="1990-01-01", hasta="2025-12-31", seed=42)',
+          antes: 'En este modo no leemos un archivo: generamos los datos con una semilla fija.',
+          salida: null,
+          explica: <>La función usa <C>pd.date_range</C> para el índice diario y <C>rng.normal</C> / <C>rng.exponential</C> para temperatura y lluvia. La <C>seed</C> fija hace que siempre salgan los mismos números.</>,
+        },
+    {
+      codigo: 'df.head()',
+      antes: 'Vemos las primeras 5 filas para revisar que se leyó bien.',
+      salida: tabla(['fecha', 'temp', 'precip'], st.todos.slice(0, 5).map((d) => [d.fecha, d1(d.temp), d1(d.precip)])),
+      explica: <><C>head()</C> es lo primero que se ejecuta siempre: confirma nombres de columnas, tipos y que el índice sean fechas. La lluvia está en mm por día y la temperatura en °C.</>,
+    },
+    {
+      codigo: 'df.shape',
+      antes: '¿Cuántas filas y columnas tenemos?',
+      salida: `(${st.todos.length}, 2)`,
+      explica: <><C>shape</C> no lleva paréntesis porque es un atributo, no una función. Son {fmt(st.todos.length, 0)} días: de 1990 a 2025 sin huecos.</>,
+    },
+    {
+      codigo: 'df["anio"] = df.index.year\ndf["decada"] = (df["anio"] // 10 * 10).astype(str) + "s"\ndf["decada"].value_counts().sort_index()',
+      antes: 'Creamos columnas nuevas a partir del índice de fechas.',
+      salida: tabla(['decada', 'count'], porDecada),
+      explica: <><C>// 10 * 10</C> redondea hacia abajo a la década (2017 → 2010). La operación se aplica a toda la columna sin ningún <C>for</C>: eso es <em>vectorizar</em>. <C>value_counts</C> cuenta cuántas veces aparece cada valor; la década de 2020 tiene menos días porque solo llega a 2025.</>,
+    },
+    {
+      codigo: '# ERA5 no mide la niebla: la simulamos (1 = hubo niebla)\nrng = np.random.default_rng(seed=42)\nprob = np.array(prob_niebla)[df.index.month - 1]\ndf["niebla"] = (rng.random(len(df)) < prob).astype(int)',
+      antes: 'Agregamos la columna de niebla.',
+      salida: null,
+      explica: <><C>rng.random(len(df))</C> genera un número al azar por día; compararlo con la probabilidad del mes da <C>True</C>/<C>False</C>, y <C>astype(int)</C> lo vuelve 1/0. Así sumar la columna cuenta días con niebla.</>,
+    },
+    {
+      codigo: `sel = df[df["decada"].isin(${JSON.stringify(st.decadas).replace(/,/g, ', ')})]\nsel.shape`,
+      antes: 'Aplicamos el mismo filtro de décadas que tienes en el dashboard.',
+      salida: `(${st.dias.length}, 5)`,
+      explica: <><C>isin</C> devuelve una máscara de <C>True</C>/<C>False</C>; ponerla entre corchetes deja solo las filas <C>True</C>. Guardamos el resultado en <C>sel</C> y dejamos <C>df</C> intacto para poder comparar con el total.</>,
+    },
+    {
+      codigo: 'sel[["temp", "precip"]].describe().round(1)',
+      antes: 'Un resumen estadístico en una sola línea.',
+      salida: tabla(['', 'temp', 'precip'], ['count', 'mean', 'std', 'min', '50%', 'max'].map((k, i) => [k, i === 0 ? dt[0] : d1(dt[i]), i === 0 ? dp[0] : d1(dp[i])])),
+      explica: <>Media, desviación estándar, mínimo, mediana (50%) y máximo. Fíjate que en la lluvia la mediana es mucho menor que la media: la mayoría de los días llueve poco y unos cuantos aguaceros jalan el promedio hacia arriba.</>,
+    },
+    {
+      consulta: true,
+      pregunta: '¿cómo cambió el clima de una década a otra?',
+      codigo: 'sel.groupby("decada")[["temp", "precip"]].agg(["mean", "max"]).round(1)',
+      antes: 'Agrupamos por década y sacamos promedio y máximo de cada variable.',
+      salida: tabla(['decada', 'temp_mean', 'temp_max', 'precip_mean', 'precip_max'], resumen),
+      explica: <><C>groupby</C> parte la tabla en grupos (una década cada uno), <C>agg</C> aplica varias funciones a la vez y el resultado tiene columnas de dos niveles: variable y estadística.</>,
+      conclusion: `La década más cálida en tu selección es ${masCalida[0]}, con ${masCalida[1]} °C de temperatura media diaria.`,
+    },
+  ]
 }
 
-function LeccionCalor({ st }) {
-  return (
-    <>
-      <p className="text-[#b9c4b7]">
-        Una <strong className="text-[#eef3ea]">anomalía térmica</strong> es cuánto se aleja un mes de su “normal”. Comparamos cada mes contra el promedio de ese mismo mes en 1990–2019
-        (30 años, como recomienda la OMM), así quitamos el ciclo estacional y queda solo el cambio.
-      </p>
-      <Editor
-        titulo="02_mapa_calor.py"
-        codigo={`
-# 1) Temperatura media de cada año-mes
-mensual = df.groupby(["anio", "mes"])["temp"].mean().reset_index()
-
-# 2) Normal climatológica: promedio por mes en 1990–2019
-base = mensual[mensual["anio"].between(1990, 2019)]
-normal = base.groupby("mes")["temp"].mean()
-
-# 3) Anomalía = valor observado - normal de su mes
-mensual["anomalia"] = mensual["temp"] - mensual["mes"].map(normal)
-
-# 4) Tabla dinámica: años en filas, meses en columnas
-heat = mensual.pivot_table(index="anio", columns="mes",
-                           values="anomalia", aggfunc="mean")
-
-# 5) Promedio anual y tendencia lineal con NumPy
-anual = heat.mean(axis=1)
-pendiente, intercepto = np.polyfit(anual.index, anual.values, deg=1)
-print(f"Tendencia: {pendiente * 10:+.2f} °C por década")`}
-      />
-      <Salida>
-        {`normal (°C):\n`}
-        {MESES.map((m, i) => `  ${m}  ${st.normal[i].toFixed(2)}`).join('\n')}
-        {`\n\nanual.tail(3):\n`}
-        {st.anualAnom.slice(-3).map((a) => `  ${a.anio}   ${signo(a.anual, 3)}`).join('\n')}
-        {`\n\nTendencia: ${signo(st.pendiente * 10, 2)} °C por década`}
-        {st.fuente === 'real' ? `\n\n# misma cuenta, 1990–2025, sin filtros\nERA5        ${signo(st.comparacion.tendEra5, 2)} °C/década\nNASA POWER  ${signo(st.comparacion.tendPower, 2)} °C/década  (1990–2024)` : ''}
-      </Salida>
-      <Paso n="1" titulo="groupby vs pivot_table">
-        <C>groupby</C> produce una tabla “larga” (una fila por año-mes). <C>pivot_table</C> la vuelve “ancha”: exactamente la forma de la cuadrícula del mapa de calor.
-      </Paso>
-      <Paso n="2" titulo=".map(normal)">
-        <C>normal</C> es una Serie indexada por mes; <C>.map()</C> busca la normal de cada fila sin hacer un <C>merge</C>.
-      </Paso>
-      <Paso n="3" titulo="np.polyfit">
-        Ajusta una recta por mínimos cuadrados. La pendiente (°C/año × 10) resume en un número cuánto se calienta el bosque por década.
-      </Paso>
-      <Paso n="4" titulo="Compara fuentes antes de concluir">
-        ERA5 y NASA POWER son reanálisis en malla: cada celda promedia decenas de kilómetros y una altitud distinta (1405 m vs. 1133 m). Por eso su temperatura absoluta y su tendencia
-        difieren. Comparar anomalías (cada una contra su propia normal) en lugar de valores absolutos es la forma justa de ponerlas lado a lado.
-      </Paso>
-    </>
-  )
+function pasosCalor(st) {
+  const mensual = st.mensual
+  const tasas = MESES.map((_, m) => {
+    const fs = mensual.filter((f) => f.mes === m)
+    const [p] = polyfit1(fs.map((f) => f.anio), fs.map((f) => f.anomalia))
+    return [m + 1, p * 10]
+  }).sort((a, b) => b[1] - a[1])
+  const ult = st.calor.slice(-3)
+  return [
+    {
+      codigo: 'mensual = sel.groupby([sel.index.year, sel.index.month])["temp"].mean()\nmensual.head(3)',
+      antes: 'Pasamos de datos diarios a un promedio por año y mes.',
+      salida: tabla(['', '', 'temp'], mensual.slice(0, 3).map((f) => [f.anio, f.mes + 1, d2(f.temp)])) + `\nName: temp, Length: ${mensual.length}`,
+      explica: <>Agrupar por dos llaves crea un índice de dos niveles (año, mes). Cada grupo se resume con <C>mean()</C>: {mensual.length} meses en total.</>,
+    },
+    {
+      codigo: 'mensual = mensual.rename_axis(["anio", "mes"]).reset_index()\nmensual.head(3)',
+      antes: 'Convertimos ese índice doble en columnas normales.',
+      salida: tabla(['', 'anio', 'mes', 'temp'], mensual.slice(0, 3).map((f, i) => [i, f.anio, f.mes + 1, d2(f.temp)])),
+      explica: <><C>rename_axis</C> le da nombre a los niveles y <C>reset_index</C> los baja a columnas. Es más fácil filtrar y unir con columnas que con índices dobles.</>,
+    },
+    {
+      codigo: 'base = df.loc[:"2019"]          # todo hasta dic-2019\nnormal = base.groupby(base.index.month)["temp"].mean().round(2)\nnormal',
+      antes: 'Calculamos la "normal": el promedio de cada mes en 1990–2019.',
+      salida: tabla(['mes', 'temp'], st.normal.map((v, i) => [i + 1, d2(v)])),
+      explica: <>Con un índice de fechas se puede cortar con texto: <C>df.loc[:"2019"]</C> toma todo hasta 2019. Usamos 30 años, como recomienda la OMM, y siempre sobre <C>df</C> completo para que la normal no cambie con tus filtros.</>,
+    },
+    {
+      codigo: 'mensual["anomalia"] = mensual["temp"] - mensual["mes"].map(normal)\nmensual.tail(3)',
+      antes: 'Restamos a cada mes su normal: eso es la anomalía.',
+      salida: tabla(['', 'anio', 'mes', 'temp', 'anomalia'], mensual.slice(-3).map((f, i) => [mensual.length - 3 + i, f.anio, f.mes + 1, d2(f.temp), d2(f.anomalia)])),
+      explica: <><C>.map(normal)</C> busca, para cada fila, la normal de su mes (la Serie <C>normal</C> funciona como diccionario). Una anomalía positiva es un mes más caliente de lo normal.</>,
+    },
+    {
+      codigo: 'heat = mensual.pivot_table(index="anio", columns="mes", values="anomalia")\nheat.tail(3).round(1)',
+      antes: 'Reacomodamos: años en filas, meses en columnas.',
+      salida: tabla(['mes', ...MESES.map((_, i) => i + 1)], ult.map((c) => [c.anio, ...c.meses.map((m) => d1(m.anomalia))])),
+      explica: <><C>pivot_table</C> convierte la tabla “larga” en una “ancha”. Esta matriz es literalmente el mapa de calor: cada celda se pinta según su valor.</>,
+    },
+    {
+      codigo: 'anual = heat.mean(axis=1)\npendiente = np.polyfit(anual.index, anual, deg=1)[0]\nprint(f"{pendiente * 10:+.2f} °C por década")',
+      antes: 'Ajustamos una recta a la anomalía de cada año.',
+      salida: `${signo(st.pendiente * 10)} °C por década`,
+      explica: <><C>axis=1</C> promedia a lo largo de la fila (los 12 meses de cada año). <C>np.polyfit</C> con grado 1 ajusta una recta por mínimos cuadrados; su pendiente está en °C por año, así que la multiplicamos por 10.</>,
+    },
+    {
+      consulta: true,
+      pregunta: '¿qué meses se están calentando más rápido?',
+      codigo: 'tasa = heat.apply(lambda col: np.polyfit(heat.index, col, 1)[0] * 10)\ntasa.sort_values(ascending=False).round(2).head(3)',
+      antes: 'Repetimos la recta para cada mes por separado.',
+      salida: tabla(['mes', '°C/década'], tasas.slice(0, 3).map(([m, v]) => [m, d2(v)])),
+      explica: <><C>apply</C> ejecuta la función una vez por columna (un mes cada vez) y junta los resultados en una Serie. <C>lambda</C> es una función de una línea sin nombre.</>,
+      conclusion: `Con tus filtros, ${NOMBRE_MES[tasas[0][0] - 1]} es el mes que más se calienta (${signo(tasas[0][1])} °C/década) y ${NOMBRE_MES[tasas[11][0] - 1]} el que menos (${signo(tasas[11][1])}). ${st.fuente === 'real' ? 'Recuerda que ERA5 y NASA POWER no coinciden en la tendencia general, así que tómalo como una pista para investigar, no como conclusión.' : 'Son datos simulados: sirve para practicar el método.'}`,
+    },
+  ]
 }
 
-function LeccionDoble({ st }) {
-  return (
-    <>
-      <p className="text-[#b9c4b7]">
-        Lluvia y niebla viven en escalas distintas (milímetros vs. días), por eso la gráfica usa <strong className="text-[#eef3ea]">dos ejes Y</strong>. Antes de graficar hay que
-        llevar el dato diario a frecuencia mensual con <C>resample</C>.
-      </p>
-      <Editor
-        titulo="03_doble_eje.py"
-        codigo={`
-# resample agrupa por ventanas de tiempo usando el índice de fechas
-# 'MS' = inicio de mes ('M'/'ME' = fin de mes; 'M' está obsoleto en pandas 2.2+)
-temp_mes = df["temp"].resample("MS").mean()       # temperatura: promedio
-mensual = df.resample("MS").agg({
-    "precip": "sum",      # lluvia: se SUMA (mm acumulados en el mes)
-    "niebla": "sum",      # niebla: se suman los días con 1
-})
-
-# Ciclo anual promedio (lo que ves en la gráfica)
-ciclo = mensual.groupby(mensual.index.month).mean()
-
-# ¿Llueve más cuando hay más niebla? Correlación de Pearson
-mensual[["precip", "niebla"]].corr()
-
-# Gráfica de doble eje con matplotlib
-fig, ax1 = plt.subplots()
-ax1.bar(ciclo.index, ciclo["precip"], color="#2f78c4")
-ax2 = ax1.twinx()                        # segundo eje Y
-ax2.plot(ciclo.index, ciclo["niebla"], color="#d0702a")`}
-      />
-      <Salida>
-        {`          precip   niebla\nprecip    1.000    ${st.r.toFixed(3)}\nniebla    ${st.r.toFixed(3)}    1.000\n\n`}
-        {`Lluvia anual promedio: ${fmt(st.lluviaAnual, 0)} mm\nDías de niebla al año: ${fmt(st.nieblaAnual, 0)}`}
-      </Salida>
-      <Paso n="1" titulo="mean() o sum()">
-        La temperatura se <em>promedia</em> pero la lluvia se <em>acumula</em>: <C>resample("M").mean()</C> sobre la lluvia daría mm por día, no mm por mes. Elegir la agregación correcta es la mitad del análisis.
-      </Paso>
-      <Paso n="2" titulo="Leer la correlación">
-        r = {st.r.toFixed(2)}: {Math.abs(st.r) < 0.3 ? 'relación débil' : Math.abs(st.r) < 0.6 ? 'relación moderada' : 'relación fuerte'}
-        {st.r >= 0 ? ' y positiva' : ' y negativa'}. En el bosque de niebla buena parte del agua llega como niebla en temporada seca (los “nortes”), cuando casi no llueve: por eso la relación
-        no es tan simple como “más lluvia, más niebla”.
-      </Paso>
-      <Paso n="3" titulo="Cuidado con el doble eje">
-        Cada eje tiene su propia escala, así que el cruce de las curvas no significa nada. Usa el botón <em>Separadas</em> para ver ambas series en paneles independientes y compáralas sin esa trampa visual.
-      </Paso>
-    </>
-  )
+function pasosDoble(st) {
+  const mensual = st.mensual
+  const ciclo = st.ciclo
+  const iMax = (k) => ciclo.reduce((b, c, i) => (c[k] > ciclo[b][k] ? i : b), 0)
+  const temporada = (f) => ([5, 6, 7, 8].includes(f.mes) ? 'lluvias' : 'secas')
+  const grupos = ['lluvias', 'secas'].map((t) => {
+    const fs = mensual.filter((f) => temporada(f) === t)
+    return [t, fs.length, media(fs.map((f) => f.precip)), media(fs.map((f) => f.niebla))]
+  })
+  const [ll, se] = grupos
+  return [
+    {
+      codigo: 'mensual = sel.resample("MS").agg({"precip": "sum", "niebla": "sum"})\nmensual.head(3)',
+      antes: 'Agrupamos los días en meses usando el índice de fechas.',
+      salida: tabla(['fecha', 'precip', 'niebla'], mensual.slice(0, 3).map((f) => [fechaDe(f), d1(f.precip), f.niebla])),
+      explica: <><C>resample("MS")</C> hace ventanas por mes (MS = inicio de mes). Ojo con la agregación: la lluvia se <em>suma</em> (mm del mes) y la niebla también (días con niebla). Si usaras <C>mean()</C> obtendrías mm por día.</>,
+    },
+    {
+      codigo: 'ciclo = mensual.groupby(mensual.index.month).mean().round(1)\nciclo',
+      antes: 'Promediamos todos los eneros, todos los febreros, etc.',
+      salida: tabla(['mes', 'precip', 'niebla'], ciclo.map((c, i) => [i + 1, d1(c.precip), d1(c.niebla)])),
+      explica: <>Esto es el “ciclo anual promedio”: exactamente lo que dibuja la gráfica de doble eje.</>,
+    },
+    {
+      codigo: 'ciclo.idxmax()',
+      antes: '¿En qué mes está el máximo de cada columna?',
+      salida: tabla(['', ''], [['precip', iMax('precip') + 1], ['niebla', iMax('niebla') + 1]]),
+      explica: <><C>idxmax</C> no devuelve el valor máximo sino su <em>etiqueta</em> en el índice. La lluvia llega al máximo en {NOMBRE_MES[iMax('precip')]} y la niebla en {NOMBRE_MES[iMax('niebla')]}: no coinciden.</>,
+    },
+    {
+      codigo: 'mensual.corr().round(2)',
+      antes: 'Medimos qué tanto se mueven juntas lluvia y niebla.',
+      salida: tabla(['', 'precip', 'niebla'], [['precip', '1.00', d2(st.r)], ['niebla', d2(st.r), '1.00']]),
+      explica: <>La correlación de Pearson va de −1 a 1. Aquí r = {d2(st.r)}: {Math.abs(st.r) < 0.3 ? 'una relación débil' : Math.abs(st.r) < 0.6 ? 'una relación moderada' : 'una relación fuerte'}. La diagonal siempre vale 1 porque cada variable se correlaciona perfecto consigo misma.</>,
+    },
+    {
+      codigo: 'mensual["temporada"] = np.where(mensual.index.month.isin([6, 7, 8, 9]),\n                                  "lluvias", "secas")\nmensual["temporada"].value_counts()',
+      antes: 'Etiquetamos cada mes como temporada de lluvias (jun–sep) o de secas.',
+      salida: tabla(['temporada', 'count'], grupos.map((g) => [g[0], g[1]])),
+      explica: <><C>np.where(condición, a, b)</C> es un “if” vectorizado: pone <C>a</C> donde la condición es cierta y <C>b</C> donde no, para toda la columna a la vez.</>,
+    },
+    {
+      consulta: true,
+      pregunta: '¿la niebla compensa la falta de lluvia en secas?',
+      codigo: 'mensual.groupby("temporada")[["precip", "niebla"]].mean().round(1)',
+      antes: 'Comparamos lluvia y días de niebla promedio por temporada.',
+      salida: tabla(['temporada', 'precip', 'niebla'], grupos.map((g) => [g[0], d1(g[2]), d1(g[3])])),
+      explica: <>Un solo <C>groupby</C> responde la pregunta: promedio mensual de cada variable en cada temporada.</>,
+      conclusion: `En secas llueven ${d1(se[2])} mm al mes contra ${d1(ll[2])} mm en lluvias (${Math.round((se[2] / ll[2]) * 100)} %), pero los días con niebla casi no bajan (${d1(se[3])} vs. ${d1(ll[3])}). Ese es el papel del bosque de niebla: atrapar agua de las nubes cuando no llueve. Ojo: la niebla de este dashboard es simulada.`,
+    },
+  ]
 }
 
-function LeccionLluvia({ st }) {
-  return (
-    <>
-      <p className="text-[#b9c4b7]">
-        Un evento extremo es un día cuya lluvia supera un <strong className="text-[#eef3ea]">umbral</strong>. Con máscaras booleanas filtramos esos días y con <C>pd.cut</C> los repartimos en
-        rangos para contar cuántos caen en cada uno.
-      </p>
-      <Editor
-        titulo="04_lluvias_extremas.py"
-        codigo={`
-umbral = ${st.umbral}  # mm/día (mueve el control deslizante)
-
-# Máscara booleana: True donde se cumple la condición
-lluviosos = df[df["precip"] >= 1.0]
-extremos = df[df["precip"] > umbral]
-
-# Umbral estadístico alternativo: percentil 95
-p95 = np.percentile(lluviosos["precip"], 95)
-
-# Rangos con pd.cut (right=False → [1, 5), [5, 10), ...)
-bins = [1, 5, 10, 20, 30, 50, 75, 100, 200]
-lluviosos["rango"] = pd.cut(lluviosos["precip"], bins=bins, right=False)
-
-# Conteo por década y rango, normalizado por años de cada década
-anios = df.groupby("decada")["anio"].nunique()
-tabla = (lluviosos.groupby(["decada", "rango"], observed=True)
-                  .size().unstack(fill_value=0)
-                  .div(anios, axis=0))
-
-extremos.groupby("decada").size() / anios`}
-      />
-      <Salida>
-        {`p95 = ${st.p95.toFixed(1)} mm\n\nEventos > ${st.umbral} mm por año:\n`}
-        {st.extPorDecada.map((e) => `  ${e.decada}   ${e.porAnio.toFixed(2)}   (${e.n} eventos en ${e.anios} años)`).join('\n')}
-      </Salida>
-      <Paso n="1" titulo="Máscaras booleanas">
-        <C>{'df["precip"] > umbral'}</C> devuelve una Serie de True/False del mismo largo que <C>df</C>; al usarla entre corchetes solo quedan las filas True. Se combinan con <C>&</C> y <C>|</C>, siempre entre paréntesis.
-      </Paso>
-      <Paso n="2" titulo="Normalizar antes de comparar">
-        La década de 2020 solo tiene {st.anios2020} años de datos. Dividir entre <C>nunique()</C> de años convierte conteos en <em>eventos por año</em> y hace justa la comparación.
-      </Paso>
-      <Paso n="3" titulo="Histograma vs. violín">
-        El histograma muestra conteos por rango; el violín estima la densidad completa (KDE, como <C>seaborn.violinplot</C>) y deja ver la cola larga de los extremos.
-      </Paso>
-    </>
-  )
+function pasosLluvia(st) {
+  const dias = st.dias
+  const lluviosos = st.lluviosos
+  const umbral = st.umbral
+  const extremos = dias.filter((d) => d.precip > umbral)
+  const top = [...extremos].sort((a, b) => b.precip - a.precip).slice(0, 5)
+  const conteos = ETIQUETAS_BINS.map((_, i) => [`[${BINS[i]}, ${BINS[i + 1]})`, lluviosos.filter((x) => x.precip >= BINS[i] && x.precip < BINS[i + 1]).length])
+  const porMes = MESES.map((_, m) => [m + 1, extremos.filter((x) => x.mes === m).length]).sort((a, b) => b[1] - a[1])
+  const top3 = porMes.slice(0, 3)
+  const enTop3 = top3.reduce((a, b) => a + b[1], 0)
+  return [
+    {
+      codigo: 'mascara = sel["precip"] >= 1\nmascara.head(3)',
+      antes: 'Una comparación sobre una columna entera.',
+      salida: tabla(['fecha', 'precip'], dias.slice(0, 3).map((d) => [d.fecha, d.precip >= 1 ? 'True' : 'False'])) + '\nName: precip, dtype: bool',
+      explica: <>El resultado es una <em>máscara booleana</em>: una Serie de <C>True</C>/<C>False</C> del mismo largo que <C>sel</C>. Usamos 1 mm como mínimo para contar un día como lluvioso.</>,
+    },
+    {
+      codigo: 'lluviosos = sel[mascara]\nlen(lluviosos)',
+      antes: 'Usamos la máscara para quedarnos solo con los días de lluvia.',
+      salida: String(lluviosos.length),
+      explica: <>Al poner la máscara entre corchetes solo pasan las filas <C>True</C>. De {fmt(dias.length, 0)} días, {fmt(lluviosos.length, 0)} tuvieron al menos 1 mm ({Math.round((lluviosos.length / dias.length) * 100)} %).</>,
+    },
+    {
+      codigo: 'p95 = lluviosos["precip"].quantile(0.95)\nround(p95, 1)',
+      antes: '¿Qué cuenta como “extremo”? Una opción estadística es el percentil 95.',
+      salida: d1(st.p95),
+      explica: <>El 95 % de los días lluviosos tuvo menos de {d1(st.p95)} mm. El dashboard usa un umbral fijo de {umbral} mm (lo mueves con el control deslizante), pero el percentil es la forma de definirlo a partir de los propios datos.</>,
+    },
+    {
+      codigo: `extremos = sel[sel["precip"] > ${umbral}]\nextremos.nlargest(5, "precip")[["precip"]]`,
+      antes: `Filtramos los días con más de ${umbral} mm y vemos los 5 mayores.`,
+      salida: top.length ? tabla(['fecha', 'precip'], top.map((d) => [d.fecha, d1(d.precip)])) : 'Empty DataFrame',
+      explica: <><C>nlargest</C> ordena y corta en un solo paso (más rápido que <C>sort_values().head()</C>). Hay {extremos.length} días por encima de {umbral} mm en tu selección.</>,
+    },
+    {
+      codigo: 'bins = [1, 5, 10, 20, 30, 50, 75, 100, 200]\nrangos = pd.cut(lluviosos["precip"], bins=bins, right=False)\nrangos.value_counts().sort_index()',
+      antes: 'Repartimos los días lluviosos en rangos de intensidad.',
+      salida: tabla(['precip', 'count'], conteos),
+      explica: <><C>pd.cut</C> convierte un número en un intervalo; <C>right=False</C> hace los rangos cerrados a la izquierda: [1, 5) incluye el 1 pero no el 5. Estos conteos son el histograma.</>,
+    },
+    {
+      codigo: 'anios = sel.groupby("decada")["anio"].nunique()\n(extremos.groupby("decada").size() / anios).round(2)',
+      antes: 'Contamos extremos por década, pero normalizado por años.',
+      salida: tabla(['decada', ''], st.extPorDecada.map((e) => [e.decada, d2(e.porAnio)])),
+      explica: <>La década de 2020 solo tiene {st.anios2020} años de datos, así que comparar conteos crudos sería injusto. Dividir dos Series alinea por índice (la década) automáticamente: eso es la <em>alineación</em> de Pandas.</>,
+    },
+    {
+      consulta: true,
+      pregunta: '¿en qué meses caen los aguaceros extremos?',
+      codigo: 'por_mes = extremos.groupby(extremos.index.month).size()\npor_mes.sort_values(ascending=False).head(3)',
+      antes: 'Agrupamos los días extremos por mes del año.',
+      salida: extremos.length ? tabla(['mes', 'count'], top3) : 'Series([], dtype: int64)',
+      explica: <>Agrupar por <C>extremos.index.month</C> junta todos los eneros, todos los febreros, etc., sin importar el año.</>,
+      conclusion: extremos.length
+        ? `${Math.round((enTop3 / extremos.length) * 100)} % de los días con más de ${umbral} mm caen en ${top3.map(([m]) => NOMBRE_MES[m - 1]).slice(0, -1).join(', ')} y ${NOMBRE_MES[top3[top3.length - 1][0] - 1]}. Esos son los meses a vigilar por deslaves e inundaciones.`
+        : `No hay días con más de ${umbral} mm en tu selección: baja el umbral y vuelve a ejecutar.`,
+    },
+  ]
 }
+
+const INTROS = {
+  datos: (st) => (
+    <>
+      Ejecuta cada celda en orden, como en un cuaderno de Jupyter. Vamos a cargar {st.fuente === 'real' ? 'los datos reales de ERA5' : 'los datos simulados'}, explorarlos y terminar con una consulta que resume el clima por década.
+    </>
+  ),
+  calor: () => <>Una <strong className="text-[#eef3ea]">anomalía térmica</strong> es cuánto se aleja un mes de su normal. Paso a paso construimos el mapa de calor y al final preguntamos qué meses se calientan más rápido.</>,
+  doble: () => <>Pasamos de datos diarios a mensuales, armamos el ciclo anual de lluvia y niebla y terminamos comparando la temporada de lluvias contra la de secas.</>,
+  lluvia: (st) => <>Con máscaras booleanas y <C>pd.cut</C> encontramos los aguaceros extremos (más de {st.umbral} mm en un día) y averiguamos en qué meses caen.</>,
+}
+const PASOS = { datos: pasosDatos, calor: pasosCalor, doble: pasosDoble, lluvia: pasosLluvia }
 
 /* ───────────────────────── App ───────────────────────── */
 
@@ -956,6 +1087,10 @@ export default function BosqueNiebla() {
       decadas,
       fuente,
       comparacion,
+      todos: datos,
+      dias,
+      mensual,
+      lluviosos,
       totalDias: dias.length,
       head: dias.slice(0, 5),
       normal: mensualTodo.normal,
